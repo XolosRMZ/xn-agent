@@ -320,7 +320,9 @@ export const registerTriviaRoutes = (params: {
         claimExpiresAt,
       });
     } catch (error) {
-      elizaLogger.error("Trivia close failed:", error);
+      const errorMessage =
+        error instanceof Error ? error.stack || error.message : String(error);
+      elizaLogger.error(`Trivia close failed: ${errorMessage}`);
       res.status(500).json({ error: "Failed to close trivia." });
     }
   });
@@ -535,7 +537,9 @@ export const registerTriviaRoutes = (params: {
         rewardRmz,
       });
     } catch (error) {
-      elizaLogger.error("Claim failed:", error);
+      const errorMessage =
+        error instanceof Error ? error.stack || error.message : String(error);
+      elizaLogger.error(`Claim failed: ${errorMessage}`);
       res.status(500).json({ error: "Claim failed." });
     }
   });

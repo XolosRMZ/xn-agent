@@ -45,6 +45,7 @@ TWITTER_EMAIL="your@email.com"
 pnpm i && pnpm start
 ```
 Note: this requires node to be at least version 22 when you install packages and run the agent.
+Note: `pnpm start` sets `TS_NODE_TRANSPILE_ONLY=1` because ts-node/esm typechecking fails to resolve @elizaos package exports even when `tsc -p tsconfig.json` succeeds.
 
 ## Trivia Rewards (XoloGuardian)
 
