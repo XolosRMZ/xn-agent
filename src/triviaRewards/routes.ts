@@ -13,7 +13,7 @@ import {
   toDayKey,
 } from "./helpers.ts";
 import { getBlockHeight, ownsToken } from "./chronik.ts";
-import { sendRmz } from "./rmzSend.ts";
+import sendRmz from "./rmzSend.ts";
 
 const REWARD_RMZ_DEFAULT = 3;
 const TRIVIA_WINDOW_MINUTES_DEFAULT = 10;
@@ -462,7 +462,10 @@ export const registerTriviaRoutes = (params: {
         return;
       }
 
-      const rewardRmz = claim.reward_rmz;
+      const rewardRmz =
+        Number.isFinite(claim.reward_rmz) && claim.reward_rmz > 0
+          ? Math.trunc(claim.reward_rmz)
+          : REWARD_RMZ_DEFAULT;
       const dayKey = toDayKey(now);
       const dailyCap = Number(process.env.DAILY_CAP_RMZ || 50);
       const maxWinPerUser = Number(process.env.MAX_WIN_PER_USER_PER_DAY || 1);
@@ -473,68 +476,88 @@ export const registerTriviaRoutes = (params: {
       const spendSoFar = store.getDailySpend(dayKey);
       if (spendSoFar + rewardRmz > dailyCap) {
         elizaLogger.warn(`Daily cap reached for ${claim.trivia_id}`);
-        res.status(429).json({ error: "rate_limited" });
+        res.status(429).json({ error: "daily_cap_reached" });
         return;
       }
 
-      const winsSoFar = store.countWinsForUser(
-        dayKey,
-        claim.winner_twitter_user_id
-      );
-      if (winsSoFar >= maxWinPerUser) {
-        elizaLogger.warn(
-          `User daily win limit reached for ${claim.winner_twitter_user_id}`
-        );
-        res.status(429).json({ error: "rate_limited" });
+      const userTotals = store.getUserDayTotals(address, dayKey);
+      if (userTotals.winCount >= maxWinPerUser) {
+        elizaLogger.warn(`User daily win limit reached for ${address}`);
+        res.status(429).json({ error: "user_cap_reached" });
         return;
       }
-
-      const addressSpend = store.sumAddressSpend(dayKey, address);
-      if (addressSpend + rewardRmz > maxRmzPerAddress) {
+      if (userTotals.totalRmz + rewardRmz > maxRmzPerAddress) {
         elizaLogger.warn(`Address daily limit reached for ${address}`);
-        res.status(429).json({ error: "rate_limited" });
+        res.status(429).json({ error: "user_cap_reached" });
         return;
       }
 
-      const tokenId = process.env.RMZ_TOKEN_ID;
-      if (!tokenId) {
-        res.status(500).json({ error: "RMZ_TOKEN_ID not configured." });
+      const lockAcquired = store.acquireClaimLock({
+        claimCode,
+        lockExpiresAt: now + CLAIM_LOCK_MS,
+        now,
+      });
+      if (!lockAcquired) {
+        const latestClaim = store.getClaimByCode(claimCode);
+        if (latestClaim?.used_at) {
+          res.json({
+            triviaId: latestClaim.trivia_id,
+            txid: latestClaim.txid,
+            status: "already_paid",
+          });
+          return;
+        }
+        res.status(429).json({ error: "rate_limited" });
         return;
       }
 
       elizaLogger.log(
         `Claim payout attempt: ${claim.trivia_id} -> ${address} (${rewardRmz} RMZ)`
       );
-      const sendResult = await sendRmz({
-        toAddress: address,
-        amountRmz: rewardRmz,
-        tokenId,
-        mnemonic: process.env.REWARD_WALLET_MNEMONIC,
-        wif: process.env.REWARD_WALLET_WIF,
-      });
-      if (!sendResult.ok) {
-        elizaLogger.warn(`Payout not implemented for ${claim.trivia_id}`);
-        res.status(501).json({ error: "payout_not_implemented" });
+      let txid: string;
+      try {
+        txid = await sendRmz({
+          toAddress: address,
+          amountRmzAtoms: BigInt(rewardRmz),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        elizaLogger.error(`RMZ broadcast failed: ${message}`);
+        store.clearClaimLockByCode(claimCode);
+        res.status(502).json({ error: "broadcast_failed" });
         return;
       }
 
-      store.recordClaimAndPayout({
+      const recorded = store.recordPayoutAndMarkClaim({
+        claimCode,
         triviaId: claim.trivia_id,
         usedAt: now,
         usedAddress: address,
-        txid: sendResult.txid,
+        txid,
         twitterUserId: claim.winner_twitter_user_id,
         rmzAmount: rewardRmz,
         dayKey,
       });
+      if (!recorded) {
+        store.clearClaimLockByCode(claimCode);
+        const latestClaim = store.getClaimByCode(claimCode);
+        res.json({
+          triviaId: latestClaim?.trivia_id ?? claim.trivia_id,
+          txid: latestClaim?.txid ?? txid,
+          status: "already_paid",
+        });
+        return;
+      }
 
       elizaLogger.log(
-        `Claim paid: ${claim.trivia_id} -> ${address} txid ${sendResult.txid}`
+        `Claim paid: ${claim.trivia_id} -> ${address} txid ${txid}`
       );
       res.json({
         triviaId: claim.trivia_id,
-        txid: sendResult.txid,
         rewardRmz,
+        address,
+        txid,
+        status: "paid",
       });
     } catch (error) {
       const errorMessage =

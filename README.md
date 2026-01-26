@@ -47,6 +47,20 @@ pnpm i && pnpm start
 Note: this requires node to be at least version 22 when you install packages and run the agent.
 Note: `pnpm start` sets `TS_NODE_TRANSPILE_ONLY=1` because ts-node/esm typechecking fails to resolve @elizaos package exports even when `tsc -p tsconfig.json` succeeds.
 
+## PM2 verification (OpenAI embeddings, no local Llama/Ollama)
+
+```bash
+pm2 delete xologuardian
+pm2 flush
+pm2 start pnpm --name xologuardian --interpreter none -- start -- --character characters/xolo_guardian.character.json
+pm2 logs xologuardian
+```
+
+Expected:
+- No `Initializing LlamaService...`
+- No requests to `http://localhost:11434`
+- Startup banner shows `USE_OPENAI_EMBEDDING=true` and `USE_OLLAMA_EMBEDDING=false`
+
 ## Trivia Rewards (XoloGuardian)
 
 ### Env vars

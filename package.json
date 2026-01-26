@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
-    "start": "tsc -p tsconfig.json && TS_NODE_TRANSPILE_ONLY=1 node --loader ts-node/esm src/index.ts",
+    "start": "tsc -p tsconfig.json && TS_NODE_TRANSPILE_ONLY=1 node --loader ts-node/esm src/bootstrap.ts",
     "typecheck": "tsc -p tsconfig.json",
     "clean": "./scripts/clean.sh",
     "start:service:all": "pm2 start pnpm --name=\"all\" --restart-delay=3000 --max-restarts=10 -- run start:all",
@@ -27,6 +27,9 @@
     "@tavily/core": "0.0.2",
     "amqplib": "0.10.5",
     "better-sqlite3": "11.5.0",
+    "chronik-client": "^4.1.0",
+    "dotenv": "16.4.5",
+    "ecash-lib": "^4.5.2",
     "fs": "0.0.1-security",
     "net": "1.0.2",
     "openai": "4.104.0",
@@ -41,10 +44,36 @@
   },
   "pnpm": {
     "overrides": {
+      "better-sqlite3": "11.6.0",
       "onnxruntime-node": "1.20.0",
       "zod": "3.25.3",
       "zod-to-json-schema": "3.25.1"
-    }
+    },
+    "ignoredBuiltDependencies": [
+      "canvas",
+      "es5-ext",
+      "esbuild",
+      "ffmpeg-static",
+      "node-hid",
+      "node-llama-cpp",
+      "onnxruntime-node",
+      "protobufjs",
+      "puppeteer",
+      "sharp",
+      "sodium-native",
+      "usb",
+      "utf-8-validate",
+      "wtf_wikipedia",
+      "youtube-dl-exec"
+    ],
+    "onlyBuiltDependencies": [
+      "@elizaos/plugin-node",
+      "better-sqlite3",
+      "bigint-buffer",
+      "bufferutil",
+      "keccak",
+      "secp256k1"
+    ]
   },
   "devDependencies": {
     "pm2": "5.4.3",

@@ -1,5 +1,6 @@
-import type Database from "better-sqlite3";
 import { elizaLogger } from "@elizaos/core";
+
+type SqliteDatabase = import("better-sqlite3").Database;
 
 export type TriviaStatus = "open" | "closed";
 
@@ -50,7 +51,7 @@ export type PayoutRecord = {
   day_key: string;
 };
 
-export function ensureTriviaTables(db: Database) {
+export function ensureTriviaTables(db: SqliteDatabase) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS trivia_rewards (
       trivia_id TEXT PRIMARY KEY,
@@ -122,6 +123,10 @@ export function ensureTriviaTables(db: Database) {
       ON trivia_payouts (twitter_user_id);
     CREATE INDEX IF NOT EXISTS trivia_payouts_addr_idx
       ON trivia_payouts (address);
+    CREATE INDEX IF NOT EXISTS trivia_payouts_day_addr_idx
+      ON trivia_payouts (day_key, address);
+    CREATE INDEX IF NOT EXISTS trivia_rewards_claim_idx
+      ON trivia_rewards (claim_code);
     CREATE INDEX IF NOT EXISTS trivia_claim_attempts_lock_idx
       ON trivia_claim_attempts (lock_expires_at);
   `);
@@ -140,17 +145,17 @@ export function ensureTriviaTables(db: Database) {
   }
 }
 
-export function getSqliteDb(adapter: any): Database {
+export function getSqliteDb(adapter: any): SqliteDatabase {
   if (!adapter || !adapter.db) {
     throw new Error("SQLite database adapter not available.");
   }
-  return adapter.db as Database;
+  return adapter.db as SqliteDatabase;
 }
 
 export class TriviaRewardsStore {
-  private db: Database;
+  private db: SqliteDatabase;
 
-  constructor(db: Database) {
+  constructor(db: SqliteDatabase) {
     this.db = db;
     ensureTriviaTables(this.db);
   }
@@ -303,6 +308,61 @@ export class TriviaRewardsStore {
     return result.changes > 0;
   }
 
+  markClaimPaid(params: {
+    claimCode: string;
+    usedAt: number;
+    usedAddress: string;
+    txid: string;
+  }) {
+    const stmt = this.db.prepare(`
+      UPDATE trivia_rewards
+      SET used_at = ?,
+          used_address = ?,
+          txid = ?,
+          invalid_attempts = 0,
+          lock_expires_at = NULL
+      WHERE claim_code = ? AND used_at IS NULL
+    `);
+    const result = stmt.run(
+      params.usedAt,
+      params.usedAddress,
+      params.txid,
+      params.claimCode
+    );
+    if (result.changes === 0) {
+      elizaLogger.warn("Claim already used or missing claim code.");
+    }
+    return result.changes > 0;
+  }
+
+  acquireClaimLock(params: {
+    claimCode: string;
+    lockExpiresAt: number;
+    now: number;
+  }) {
+    const stmt = this.db.prepare(`
+      UPDATE trivia_rewards
+      SET lock_expires_at = ?
+      WHERE claim_code = ?
+        AND used_at IS NULL
+        AND (lock_expires_at IS NULL OR lock_expires_at < ?)
+    `);
+    const result = stmt.run(
+      params.lockExpiresAt,
+      params.claimCode,
+      params.now
+    );
+    return result.changes > 0;
+  }
+
+  clearClaimLockByCode(claimCode: string) {
+    this.db
+      .prepare(
+        "UPDATE trivia_rewards SET lock_expires_at = NULL WHERE claim_code = ?"
+      )
+      .run(claimCode);
+  }
+
   clearClaimLock(triviaId: string) {
     this.db
       .prepare(
@@ -408,7 +468,7 @@ export class TriviaRewardsStore {
     return { invalidAttempts, lockExpiresAt: newLockExpiresAt };
   }
 
-  recordPayout(params: {
+  insertPayout(params: {
     triviaId: string;
     twitterUserId: string;
     address: string;
@@ -446,16 +506,17 @@ export class TriviaRewardsStore {
     return row?.total_rmz ?? 0;
   }
 
-  incrementDailySpend(dayKey: string, amount: number) {
+  incrementDailySpend(dayKey: string, delta: number) {
     const stmt = this.db.prepare(`
       INSERT INTO daily_spend (day_key, total_rmz)
       VALUES (?, ?)
       ON CONFLICT(day_key) DO UPDATE SET total_rmz = total_rmz + excluded.total_rmz
     `);
-    stmt.run(dayKey, amount);
+    stmt.run(dayKey, delta);
   }
 
-  recordClaimAndPayout(params: {
+  recordPayoutAndMarkClaim(params: {
+    claimCode: string;
     triviaId: string;
     usedAt: number;
     usedAddress: string;
@@ -465,14 +526,14 @@ export class TriviaRewardsStore {
     dayKey: string;
   }) {
     const tx = this.db.transaction(() => {
-      const updated = this.markClaimUsed({
-        triviaId: params.triviaId,
+      const updated = this.markClaimPaid({
+        claimCode: params.claimCode,
         usedAt: params.usedAt,
         usedAddress: params.usedAddress,
         txid: params.txid,
       });
       if (!updated) return false;
-      this.recordPayout({
+      this.insertPayout({
         triviaId: params.triviaId,
         twitterUserId: params.twitterUserId,
         address: params.usedAddress,
@@ -487,21 +548,20 @@ export class TriviaRewardsStore {
     return tx();
   }
 
-  countWinsForUser(dayKey: string, twitterUserId: string): number {
+  getUserDayTotals(address: string, dayKey: string): {
+    totalRmz: number;
+    winCount: number;
+  } {
     const row = this.db
       .prepare(
-        "SELECT COUNT(1) as cnt FROM trivia_payouts WHERE day_key = ? AND twitter_user_id = ?"
+        "SELECT COUNT(1) as winCount, COALESCE(SUM(rmz_amount), 0) as totalRmz FROM trivia_payouts WHERE day_key = ? AND address = ?"
       )
-      .get(dayKey, twitterUserId) as { cnt: number } | undefined;
-    return row?.cnt ?? 0;
-  }
-
-  sumAddressSpend(dayKey: string, address: string): number {
-    const row = this.db
-      .prepare(
-        "SELECT SUM(rmz_amount) as total FROM trivia_payouts WHERE day_key = ? AND address = ?"
-      )
-      .get(dayKey, address) as { total: number | null } | undefined;
-    return row?.total ?? 0;
+      .get(dayKey, address) as
+      | { winCount: number; totalRmz: number }
+      | undefined;
+    return {
+      winCount: row?.winCount ?? 0,
+      totalRmz: row?.totalRmz ?? 0,
+    };
   }
 }

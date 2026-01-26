@@ -8,7 +8,7 @@ import {
   type Character,
 } from "@elizaos/core";
 import { bootstrapPlugin } from "@elizaos/plugin-bootstrap";
-import { createNodePlugin } from "@elizaos/plugin-node";
+import { createNodePlugin, LlamaService } from "@elizaos/plugin-node";
 import { solanaPlugin } from "@elizaos/plugin-solana";
 import fs from "fs";
 import net from "net";
@@ -42,6 +42,24 @@ let nodePlugin: any | undefined;
 let triviaRoutesRegistered = false;
 
 const isEnvEnabled = (value?: string) => value === "1" || value === "true";
+
+const createNodePluginWithoutLlama = () => {
+  const plugin = createNodePlugin();
+  const services = plugin.services.filter((service) => {
+    if (service instanceof LlamaService) {
+      return false;
+    }
+    return service?.constructor?.name !== "LlamaService";
+  });
+
+  if (services.length !== plugin.services.length) {
+    elizaLogger.info(
+      "LlamaService disabled in node plugin to prevent local Llama/Ollama startup."
+    );
+  }
+
+  return { ...plugin, services };
+};
 
 const extractOpenAIOutputText = (response: any): string => {
   if (typeof response?.output_text === "string") {
@@ -102,7 +120,7 @@ export function createAgent(
     character.name,
   );
 
-  nodePlugin ??= createNodePlugin();
+  nodePlugin ??= createNodePluginWithoutLlama();
 
   return new AgentRuntime({
     databaseAdapter: db,
