@@ -4,3 +4,7 @@
 node_modules/
 dist/
 data/
+
+# local-only
+.env.local
+.pm2/
