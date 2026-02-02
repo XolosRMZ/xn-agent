@@ -66,6 +66,7 @@ export const parseTweetForReply = (raw: any): ParsedTweet | null => {
   const twitterUserId = pickFirstString(
     raw.userId,
     raw.user_id,
+    raw.author_id,
     raw.core?.user_results?.result?.rest_id,
     raw.user?.id_str
   );
@@ -80,6 +81,7 @@ export const parseTweetForReply = (raw: any): ParsedTweet | null => {
   const inReplyToStatusId = pickFirstString(
     raw.inReplyToStatusId,
     raw.in_reply_to_status_id_str,
+    raw.conversation_id,
     raw.legacy?.in_reply_to_status_id_str
   );
 
@@ -88,6 +90,11 @@ export const parseTweetForReply = (raw: any): ParsedTweet | null => {
     createdAtMs = raw.timestamp * 1000;
   } else if (typeof raw.created_at === "number") {
     createdAtMs = raw.created_at;
+  } else if (typeof raw.created_at === "string") {
+    const parsed = Date.parse(raw.created_at);
+    if (!Number.isNaN(parsed)) {
+      createdAtMs = parsed;
+    }
   } else if (typeof raw.legacy?.created_at === "string") {
     const parsed = Date.parse(raw.legacy.created_at);
     if (!Number.isNaN(parsed)) {

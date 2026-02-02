@@ -92,7 +92,9 @@ const getRuntime = (directClient: any, agentId?: string) => {
 
 const getTwitterManager = (runtime: any) => {
   if (!runtime?.clients) return null;
-  return runtime.clients.find((client: any) => client?.client?.fetchSearchTweets);
+  return runtime.clients.find(
+    (client: any) => client?.client?.v2 && typeof client?.searchRecent === "function"
+  );
 };
 
 const collectReplies = async (params: {
@@ -106,13 +108,8 @@ const collectReplies = async (params: {
   const { twitterManager, tweetId, triviaId, correctAnswers, createdAt, closesAt } =
     params;
   const query = `conversation_id:${tweetId}`;
-  const searchResult = await twitterManager.client.fetchSearchTweets(
-    query,
-    100,
-    undefined
-  );
-
-  const rawTweets = searchResult?.tweets || [];
+  const searchResult = await twitterManager.searchRecent(query, 50);
+  const rawTweets = searchResult?.data || [];
   const replies: TriviaReplyInsert[] = [];
 
   for (const raw of rawTweets) {

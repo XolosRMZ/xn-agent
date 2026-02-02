@@ -1,7 +1,7 @@
 import { AutoClientInterface } from "@elizaos/client-auto";
 import { TelegramClientInterface } from "@elizaos/client-telegram";
-import { TwitterClientInterface } from "@elizaos/client-twitter";
 import type { Character, IAgentRuntime } from "@elizaos/core";
+import { TwitterOfficialInterface } from "./twitter-official";
 
 export async function initializeClients(
   character: Character,
@@ -22,8 +22,8 @@ export async function initializeClients(
   }
 
   if (clientTypes.includes("twitter")) {
-    const twitterClients = await TwitterClientInterface.start(runtime);
-    clients.push(twitterClients);
+    const twitterClient = await TwitterOfficialInterface.start(runtime);
+    if (twitterClient) clients.push(twitterClient);
   }
 
   if (character.plugins?.length > 0) {
